@@ -18,6 +18,7 @@
 
 #define SENSOR_MAG_READY    (1 << 2)
 #define SENSOR_GPS_READY	(1 << 4)
+#define SENSOR_ALL_READY	(1 << 8)
 
 #define UART_RX_BUFFER_SIZE 1
 #define UART_TASK_DELAY 200
@@ -36,6 +37,11 @@ typedef struct {
 	uint8_t anchors;
 } GPSData;
 
+typedef struct {
+	TickType_t timestamp;
+	int16_t x, y, z, roll, pitch, yaw;
+} SensorData;
+
 /*
 * Task para enviar o pedido de Write para o IMU
 */
@@ -50,5 +56,7 @@ void vI2C_IMU_Management_Task(void *pvParameters);
 void vI2C_IMU_Handle_Interrupt();
 
 void vUART_Management_Task(void *pvParameters);
+
+void vSensor_Event_Handler_Task(void *pvParameters);
 
 #endif /* INC_COMMUNICATION_PROTOCOLS_H_ */

@@ -94,10 +94,13 @@ void StartDefaultTask(void *argument);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+#define MAX_DELAY 10
+
 SemaphoreHandle_t xDRDYBinarySemaphore;
 QueueHandle_t xMagQueue;
-EventGroupHandle_t xSensorEventGroup;
 QueueHandle_t xGPSQueue;
+QueueHandle_t xSensorQueue;
+EventGroupHandle_t xSensorEventGroup;
 
 void vI2C_IMU_Send_Request_Task(void *pvParameters) {
 	// Default mode for the sensor
@@ -127,7 +130,7 @@ void vI2C_IMU_Management_Task(void *pvParameters) {
 
 	for (;;) {
 		// Verify if the semaphore is there
-		xSemaphoreTake(xDRDYBinarySemaphore, portMAX_DELAY);
+		xSemaphoreTake(xDRDYBinarySemaphore, MAX_DELAY);
 
 		HAL_I2C_Mem_Read(&hi2c1, HMC5883L_READ_ADDRESS,
 		HMC5883L_REG_READ_ADDRESS, I2C_MEMADD_SIZE_8BIT, data, 6,
@@ -138,7 +141,10 @@ void vI2C_IMU_Management_Task(void *pvParameters) {
 		mag_data.y = (data[4] << 8) | data[5];
 		mag_data.z = (data[2] << 8) | data[3];
 
-		xQueueSend(xMagQueue, &mag_data, portMAX_DELAY);
+		if (xQueueSendToBack(xMagQueue, &mag_data, MAX_DELAY) != pdPASS) {
+			break;
+		}
+
 		xEventGroupSetBits(xSensorEventGroup, SENSOR_MAG_READY);
 	}
 }
@@ -170,7 +176,12 @@ void vUART_Management_Task(void *pvParameters) {
 						sscanf(hex_id, "%hx", &data.id);
 					}
 				}
-				xQueueSend(xGPSQueue, &data, portMAX_DELAY);
+
+				data.timestamp = xTaskGetTickCount();
+				if (xQueueSendToBack(xGPSQueue, &data, MAX_DELAY) != pdPASS) {
+					break;
+				}
+
 				xEventGroupSetBits(xSensorEventGroup, SENSOR_GPS_READY);
 
 				break;
@@ -180,6 +191,51 @@ void vUART_Management_Task(void *pvParameters) {
 		}
 
 		vTaskDelay(xDelay);
+	}
+}
+
+void vSensor_Event_Handler_Task(void *pvParameters) {
+	EventBits_t xEventGroupValue;
+	const EventBits_t xBitsToWaitFor = (SENSOR_MAG_READY | SENSOR_GPS_READY);
+	MagnetometerData magnetometer_data;
+	GPSData gps_data;
+	SensorData sensor_data;
+	for (;;) {
+		xEventGroupValue = xEventGroupWaitBits(xSensorEventGroup,
+				xBitsToWaitFor,
+				pdTRUE,
+				pdTRUE,
+				MAX_DELAY);
+
+		if (xEventGroupValue) {
+			if (!uxQueueMessagesWaiting(xMagQueue)
+					|| !uxQueueMessagesWaiting(xGPSQueue)) {
+				break;
+			}
+
+			if (xQueueReceive(xMagQueue, &magnetometer_data,
+			MAX_DELAY) != pdPASS
+					|| xQueueReceive(xGPSQueue, &gps_data, MAX_DELAY) != pdPASS) {
+				break;
+			}
+
+			// TOOD: Ver como fazer o filtro, caso exista
+
+			sensor_data.timestamp = xTaskGetTickCount();
+			sensor_data.x = gps_data.x;
+			sensor_data.y = gps_data.y;
+			sensor_data.z = gps_data.z;
+			sensor_data.roll = magnetometer_data.x;
+			sensor_data.pitch = magnetometer_data.y;
+			sensor_data.yaw = magnetometer_data.z;
+
+			if (xQueueSendToBack(xSensorQueue, &sensor_data,
+					MAX_DELAY) != pdPASS) {
+				break;
+			}
+
+			xEventGroupSetBits(xSensorEventGroup, SENSOR_ALL_READY);
+		}
 	}
 }
 
@@ -237,6 +293,9 @@ int main(void) {
 	xTaskCreate(vUART_Management_Task, "Handle UART Task", 1000,
 	NULL, 1,
 	NULL);
+	xTaskCreate(vSensor_Event_Handler_Task, "Sensor Event Handler Task", 1000,
+	NULL, 1,
+	NULL);
 
 	/* USER CODE BEGIN RTOS_MUTEX */
 	/* add mutexes, ... */
@@ -261,6 +320,7 @@ int main(void) {
 	/* add queues, ... */
 	xMagQueue = xQueueCreate(DATA_QUEUE_SIZE, sizeof(MagnetometerData));
 	xGPSQueue = xQueueCreate(DATA_QUEUE_SIZE, sizeof(GPSData));
+	xSensorQueue = xQueueCreate(DATA_QUEUE_SIZE, sizeof(SensorData));
 	/* USER CODE END RTOS_QUEUES */
 
 	/* Create the thread(s) */
