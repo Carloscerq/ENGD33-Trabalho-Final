@@ -24,6 +24,8 @@
 #include "semphr.h"
 #include "queue.h"
 #include "event_groups.h"
+#include "string.h"
+#include "stdio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -92,14 +94,10 @@ void StartDefaultTask(void *argument);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-typedef struct {
-	TickType_t timestamp;
-	int16_t x, y, z;
-} MagnetometerData;
-
 SemaphoreHandle_t xDRDYBinarySemaphore;
 QueueHandle_t xMagQueue;
 EventGroupHandle_t xSensorEventGroup;
+QueueHandle_t xGPSQueue;
 
 void vI2C_IMU_Send_Request_Task(void *pvParameters) {
 	// Default mode for the sensor
@@ -125,21 +123,63 @@ void vI2C_IMU_Handle_Interrupt() {
 
 void vI2C_IMU_Management_Task(void *pvParameters) {
 	uint8_t data[6];
+	MagnetometerData mag_data;
+
 	for (;;) {
 		// Verify if the semaphore is there
 		xSemaphoreTake(xDRDYBinarySemaphore, portMAX_DELAY);
 
 		HAL_I2C_Mem_Read(&hi2c1, HMC5883L_READ_ADDRESS,
-				HMC5883L_REG_READ_ADDRESS, I2C_MEMADD_SIZE_8BIT, data, 6,
-				HAL_MAX_DELAY);
-		int16_t mag_x = (data[0] << 8) | data[1];
-		int16_t mag_z = (data[2] << 8) | data[3];
-		int16_t mag_y = (data[4] << 8) | data[5];
+		HMC5883L_REG_READ_ADDRESS, I2C_MEMADD_SIZE_8BIT, data, 6,
+		HAL_MAX_DELAY);
 
-		MagnetometerData data = { .timestamp = xTaskGetTickCount(), .x = mag_x,
-				.y = mag_y, .z = mag_z };
-		xQueueSend(xMagQueue, &data, portMAX_DELAY);
+		mag_data.timestamp = xTaskGetTickCount();
+		mag_data.x = (data[0] << 8) | data[1];
+		mag_data.y = (data[4] << 8) | data[5];
+		mag_data.z = (data[2] << 8) | data[3];
+
+		xQueueSend(xMagQueue, &mag_data, portMAX_DELAY);
 		xEventGroupSetBits(xSensorEventGroup, SENSOR_MAG_READY);
+	}
+}
+
+void vUART_Management_Task(void *pvParameters) {
+	uint8_t uart_rx_byte;
+	uint8_t counter = 0;
+	GPSData data;
+	char hex_id[10];
+	char line_buf[UART_RX_BUFFER_SIZE];
+	const TickType_t xDelay = pdMS_TO_TICKS(UART_TASK_DELAY);
+	char ch;
+
+	for (;;) {
+		while (counter < UART_RX_BUFFER_SIZE - 1) {
+			if (HAL_UART_Receive(&huart2, &uart_rx_byte, 1, UART_RX_DELAY_TIME)
+					!= HAL_OK) {
+				break;
+			}
+
+			ch = (char) uart_rx_byte;
+			if (ch == UART_BREAK_LINE) {
+				line_buf[counter] = UART_LINE_FINISH;
+				counter = 0;
+
+				if (strncmp(line_buf, "POS", 3) == 0) {
+					if (sscanf(line_buf, "POS,%[^,],%hd,%hd,%hd,%hhu", hex_id,
+							&data.x, &data.y, &data.z, &data.anchors) == 5) {
+						sscanf(hex_id, "%hx", &data.id);
+					}
+				}
+				xQueueSend(xGPSQueue, &data, portMAX_DELAY);
+				xEventGroupSetBits(xSensorEventGroup, SENSOR_GPS_READY);
+
+				break;
+			} else {
+				line_buf[counter++] = ch;
+			}
+		}
+
+		vTaskDelay(xDelay);
 	}
 }
 
@@ -194,6 +234,9 @@ int main(void) {
 			1000,
 			NULL, 1,
 			NULL);
+	xTaskCreate(vUART_Management_Task, "Handle UART Task", 1000,
+	NULL, 1,
+	NULL);
 
 	/* USER CODE BEGIN RTOS_MUTEX */
 	/* add mutexes, ... */
@@ -217,6 +260,7 @@ int main(void) {
 	/* USER CODE BEGIN RTOS_QUEUES */
 	/* add queues, ... */
 	xMagQueue = xQueueCreate(DATA_QUEUE_SIZE, sizeof(MagnetometerData));
+	xGPSQueue = xQueueCreate(DATA_QUEUE_SIZE, sizeof(GPSData));
 	/* USER CODE END RTOS_QUEUES */
 
 	/* Create the thread(s) */
