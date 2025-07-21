@@ -106,6 +106,7 @@ void vI2C_IMU_Send_Request_Task(void *pvParameters) {
 	// Default mode for the sensor
 	uint8_t mode = 0x01;
 	const TickType_t xDelay = pdMS_TO_TICKS(I2C_TASK_DELAY);
+	TickType_t xLastWakeTime = xTaskGetTickCount();
 
 	for (;;) {
 		HAL_I2C_Mem_Write(&hi2c1,
@@ -114,7 +115,7 @@ void vI2C_IMU_Send_Request_Task(void *pvParameters) {
 		I2C_MEMADD_SIZE_8BIT, &mode, sizeof(mode),
 		HAL_MAX_DELAY);
 
-		vTaskDelay(xDelay);
+		vTaskDelayUntil(&xLastWakeTime, xDelay);
 	}
 }
 
@@ -151,46 +152,41 @@ void vI2C_IMU_Management_Task(void *pvParameters) {
 
 void vUART_Management_Task(void *pvParameters) {
 	uint8_t uart_rx_byte;
-	uint8_t counter = 0;
 	GPSData data;
-	char hex_id[10];
-	char line_buf[UART_RX_BUFFER_SIZE];
+
 	const TickType_t xDelay = pdMS_TO_TICKS(UART_TASK_DELAY);
-	char ch;
+	TickType_t xLastWakeTime = xTaskGetTickCount();
+
+	Marvelmind_Init();
+	MarvelmindUserPayload *payload;
 
 	for (;;) {
-		while (counter < UART_RX_BUFFER_SIZE - 1) {
-			if (HAL_UART_Receive(&huart2, &uart_rx_byte, 1, UART_RX_DELAY_TIME)
-					!= HAL_OK) {
-				break;
-			}
-
-			ch = (char) uart_rx_byte;
-			if (ch == UART_BREAK_LINE) {
-				line_buf[counter] = UART_LINE_FINISH;
-				counter = 0;
-
-				if (strncmp(line_buf, "POS", 3) == 0) {
-					if (sscanf(line_buf, "POS,%[^,],%hd,%hd,%hd,%hhu", hex_id,
-							&data.x, &data.y, &data.z, &data.anchors) == 5) {
-						sscanf(hex_id, "%hx", &data.id);
-					}
-				}
-
-				data.timestamp = xTaskGetTickCount();
-				if (xQueueSendToBack(xGPSQueue, &data, MAX_DELAY) != pdPASS) {
-					break;
-				}
-
-				xEventGroupSetBits(xSensorEventGroup, SENSOR_GPS_READY);
-
-				break;
-			} else {
-				line_buf[counter++] = ch;
-			}
+		if (HAL_UART_Receive(&huart2, &uart_rx_byte, 1, UART_RX_DELAY_TIME)
+							!= HAL_OK) {
+			break;
 		}
 
-		vTaskDelay(xDelay);
+		Marvelmind_ProcessByte(uart_rx_byte);
+		payload = Marvelmind_GetPayload();
+
+		if (payload.updated) {
+			// Se usar a API que devolve struct, ficaria algo como:
+			MarvelmindUserPayload *p = Marvelmind_GetPayload();
+
+			GPSData data;
+			data.timestamp = payload->timestamp;  // tick em que chegou a posição
+			data.id        = payload->id;
+			data.x         = payload->x;
+			data.y         = payload->y;
+			data.z         = payload->z;
+			data.anchors   = 0;             // se quiser mapear flags, adicione no payload
+
+			// 4) Envia para fila e sinaliza evento
+			xQueueSendToBack(xGPSQueue, &data, portMAX_DELAY);
+			xEventGroupSetBits(xSensorEventGroup, SENSOR_GPS_READY);
+		}
+
+		vTaskDelayUntil(&xLastWakeTime, xDelay);
 	}
 }
 

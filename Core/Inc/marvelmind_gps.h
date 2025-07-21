@@ -12,9 +12,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define MARVELMIND_BUFFER_SIZE 		250
-#define GENERIC_PAYLOAD_PACKET_ID 	0x0280
-#define PACKET_TYPE_WRITE_TO_DEVICE 0x4A
+#define MARVELMIND_BUFFER_SIZE 		    250
+#define PACKET_START_BYTE               0xFF
+#define PACKET_TYPE_STREAM_FROM_HEDGE   0x47
+#define HEDGEHOG_POS_PACKET_ID          0x0001
+#define POS_PAYLOAD_SIZE                0x10
 
 typedef union {
     uint8_t b[2];
@@ -27,15 +29,14 @@ typedef union {
 } uni_8x8_64;
 
 typedef struct {
-    uint8_t data[256];
+	int16_t  x, y, z;    // cm;
     uint8_t size;
-    int64_t timestamp;
+    uint8_t  id;
     bool updated;
 } MarvelmindUserPayload;
 
 void Marvelmind_Init(void);
 void Marvelmind_ProcessByte(uint8_t byte);
-void Marvelmind_CRC16(uint8_t *buf, uint8_t size);
 MarvelmindUserPayload* Marvelmind_GetPayload(void);
 
 

@@ -8,10 +8,10 @@
 
 #include "marvelmind_gps.h"
 
-static uint8_t mm_buffer[MARVELMIND_BUFFER_SIZE];
-static uint8_t mm_buf_ofs = 0;
-static uint8_t mm_packet_size = 0;
-static uint8_t mm_packet_type = 0;
+static uint8_t  mm_buffer[MARVELMIND_BUFFER_SIZE];
+static uint8_t  mm_buf_ofs = 0;
+static uint8_t  mm_packet_size = 0;
+static uint8_t  mm_packet_type = 0;
 static uint16_t mm_packet_id = 0;
 
 static MarvelmindUserPayload payload;
@@ -28,21 +28,16 @@ static void restart_packet(void) {
 }
 
 static void process_write_packet(void) {
-    if (mm_packet_id == GENERIC_PAYLOAD_PACKET_ID) {
+    if (mm_packet_id == HEDGEHOG_POS_PACKET_ID) {
         if (mm_buffer[4] < 8) return;
 
         payload.size = mm_buffer[4] - 8;
 
-        uni_8x8_64 ts;
-        for (int i = 0; i < 8; i++) {
-            ts.b[i] = mm_buffer[5 + i];
-        }
-        payload.timestamp = ts.vi64;
-
-        for (int i = 0; i < payload.size; i++) {
-            payload.data[i] = mm_buffer[13 + i];
-        }
-        payload.updated = true;
+        payload.id        = mm_packet_id;
+        payload.x         = (int16_t)( mm_buffer[13] | (mm_buffer[14] << 8) );
+        payload.y         = (int16_t)( mm_buffer[15] | (mm_buffer[16] << 8) );
+        payload.z         = (int16_t)( mm_buffer[17] | (mm_buffer[18] << 8) );
+        payload.updated   = true;
     }
 }
 
@@ -52,27 +47,48 @@ void Marvelmind_ProcessByte(uint8_t byte) {
         return;
     }
 
-    if (mm_buf_ofs == 0 && byte != 0xFF) {
-        restart_packet();
-        return;
-    }
-
-    if (mm_buf_ofs == 1 && byte != PACKET_TYPE_WRITE_TO_DEVICE) {
-        restart_packet();
-        return;
-    }
-
-    if (mm_buf_ofs == 3) {
-        mm_packet_id = mm_buffer[2] + (byte << 8);
-        if (mm_packet_id != GENERIC_PAYLOAD_PACKET_ID) {
-            restart_packet();
+    if (mm_buf_ofs == 0) {
+            if (byte != PACKET_START_BYTE) {
+                return;
+            }
+            mm_buffer[mm_buf_ofs++] = byte;
             return;
         }
-    }
 
-    if (mm_buf_ofs == 4) {
-        mm_packet_size = byte + 7;
-    }
+    if (mm_buf_ofs == 1) {
+            if (byte != PACKET_TYPE_STREAM_FROM_HEDGE) {
+                restart_packet();
+                return;
+            }
+            mm_packet_type       = byte;
+            mm_buffer[mm_buf_ofs++] = byte;
+            return;
+        }
+
+    if (mm_buf_ofs == 2) {
+            mm_buffer[mm_buf_ofs++] = byte;
+            return;
+	}
+	if (mm_buf_ofs == 3) {
+		mm_buffer[mm_buf_ofs++] = byte;
+		mm_packet_id = mm_buffer[2] | (mm_buffer[3] << 8);
+		if (mm_packet_id != HEDGEHOG_POS_PACKET_ID) {
+			restart_packet();
+			return;
+		}
+		return;
+	}
+
+	if (mm_buf_ofs == 4) {
+		mm_buffer[mm_buf_ofs++] = byte;
+		// packet size = byte (payload size) + header(5) + CRC(2)
+		mm_packet_size = byte + 7;
+		if (byte < POS_PAYLOAD_SIZE) {
+			restart_packet();
+			return;
+		}
+		return;
+	}
 
     mm_buffer[mm_buf_ofs++] = byte;
 
