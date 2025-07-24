@@ -11,10 +11,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
-#include "FreeRTOS.h"  // Para TickType_t
-#include "task.h"      // Para TickType_t
+#include "FreeRTOS.h"
+#include "task.h"
 
-// Definir M_PI se não estiver definido
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
 #endif
