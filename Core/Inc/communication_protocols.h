@@ -8,6 +8,17 @@
 #ifndef INC_COMMUNICATION_PROTOCOLS_H_
 #define INC_COMMUNICATION_PROTOCOLS_H_
 
+#include <stdint.h>
+#include <stdbool.h>
+#include <math.h>
+#include "FreeRTOS.h"  // Para TickType_t
+#include "task.h"      // Para TickType_t
+
+// Definir M_PI se não estiver definido
+#ifndef M_PI
+#define M_PI 3.14159265358979323846f
+#endif
+
 #define HMC5883L_READ_ADDRESS 0x3D
 #define HMC5883L_WRITE_ADDRESS 0x3C
 #define HMC5883L_REG_WRITE_ADDRESS 0x02
@@ -40,6 +51,7 @@ typedef struct {
 typedef struct {
 	TickType_t timestamp;
 	int16_t x, y, z, roll, pitch, yaw;
+	float omega;
 } SensorData;
 
 /*

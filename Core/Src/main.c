@@ -20,6 +20,7 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "communication_protocols.h"
+#include "kalman.h"
 #include "task.h"
 #include "semphr.h"
 #include "queue.h"
@@ -152,7 +153,6 @@ void vI2C_IMU_Management_Task(void *pvParameters) {
 
 void vUART_Management_Task(void *pvParameters) {
 	uint8_t uart_rx_byte;
-	GPSData data;
 
 	const TickType_t xDelay = pdMS_TO_TICKS(UART_TASK_DELAY);
 	TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -169,19 +169,15 @@ void vUART_Management_Task(void *pvParameters) {
 		Marvelmind_ProcessByte(uart_rx_byte);
 		payload = Marvelmind_GetPayload();
 
-		if (payload.updated) {
-			// Se usar a API que devolve struct, ficaria algo como:
-			MarvelmindUserPayload *p = Marvelmind_GetPayload();
-
+		if (payload->updated) {
 			GPSData data;
-			data.timestamp = payload->timestamp;  // tick em que chegou a posição
+			data.timestamp = xTaskGetTickCount();  // receipt completion time (in firmware)
 			data.id        = payload->id;
 			data.x         = payload->x;
 			data.y         = payload->y;
 			data.z         = payload->z;
-			data.anchors   = 0;             // se quiser mapear flags, adicione no payload
+			data.anchors   = 0;
 
-			// 4) Envia para fila e sinaliza evento
 			xQueueSendToBack(xGPSQueue, &data, portMAX_DELAY);
 			xEventGroupSetBits(xSensorEventGroup, SENSOR_GPS_READY);
 		}
@@ -196,6 +192,15 @@ void vSensor_Event_Handler_Task(void *pvParameters) {
 	MagnetometerData magnetometer_data;
 	GPSData gps_data;
 	SensorData sensor_data;
+	
+	// Inicializar o filtro de Kalman
+	kalman_filter_init();
+	
+	// Variáveis para controle de tempo
+	TickType_t xLastWakeTime = xTaskGetTickCount();
+	TickType_t xCurrentTime, xPreviousTime = xLastWakeTime;
+	float dt = 0.0f;
+	
 	for (;;) {
 		xEventGroupValue = xEventGroupWaitBits(xSensorEventGroup,
 				xBitsToWaitFor,
@@ -215,15 +220,41 @@ void vSensor_Event_Handler_Task(void *pvParameters) {
 				break;
 			}
 
-			// TOOD: Ver como fazer o filtro, caso exista
-
-			sensor_data.timestamp = xTaskGetTickCount();
-			sensor_data.x = gps_data.x;
-			sensor_data.y = gps_data.y;
+			// Filtro de Kalman
+			
+			// calculo do dt
+			xCurrentTime = xTaskGetTickCount();
+			dt = (float)(xCurrentTime - xPreviousTime) / 1000.0f; // Convert to seconds
+			xPreviousTime = xCurrentTime;
+			
+			// predição do Kalman (baseada no modelo de movimento)
+			if (dt > 0.001f && dt < 1.0f) {  // Validar dt razoável
+				kalman_filter_predict(dt);
+			}
+			
+			// preparar dados de medição
+			SensorData measurement_data;
+			measurement_data.x = (float)gps_data.x / 100.0f;     // Convert cm to m
+			measurement_data.y = (float)gps_data.y / 100.0f;     // Convert cm to m
+			
+			// calcular orientação (yaw) a partir do magnetômetro
+			float mag_x = (float)magnetometer_data.x;
+			float mag_y = (float)magnetometer_data.y;
+			measurement_data.omega = atan2f(mag_y, mag_x);       // Yaw em radianos
+			
+			// atualização do Kalman com as medições
+			kalman_filter_update(&measurement_data);
+			
+			// obter estados estimados do Kalman
+			sensor_data.timestamp = xCurrentTime;
+			sensor_data.x = kalman_state.states_vector[0] * 100.0f;  // Convert back to cm
+			sensor_data.y = kalman_state.states_vector[1] * 100.0f;  // Convert back to cm
 			sensor_data.z = gps_data.z;
-			sensor_data.roll = magnetometer_data.x;
-			sensor_data.pitch = magnetometer_data.y;
-			sensor_data.yaw = magnetometer_data.z;
+			
+			// estados de orientação e velocidade do Kalman
+			sensor_data.roll = magnetometer_data.x;   // Raw magnetometer
+			sensor_data.pitch = magnetometer_data.y;  // Raw magnetometer  
+			sensor_data.yaw = kalman_state.states_vector[2] * 180.0f / M_PI;  // Convert rad to degrees
 
 			if (xQueueSendToBack(xSensorQueue, &sensor_data,
 					MAX_DELAY) != pdPASS) {
@@ -525,30 +556,6 @@ static void MX_RTC_Init(void) {
 	}
 
 	/* USER CODE BEGIN Check_RTC_BKUP */
-
-	/* USER CODE END Check_RTC_BKUP */
-
-	/** Initialize RTC and set the Time and Date
-	 */
-	sTime.Hours = 0x0;
-	sTime.Minutes = 0x0;
-	sTime.Seconds = 0x0;
-	sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
-	sTime.StoreOperation = RTC_STOREOPERATION_RESET;
-	if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK) {
-		Error_Handler();
-	}
-	sDate.WeekDay = RTC_WEEKDAY_MONDAY;
-	sDate.Month = RTC_MONTH_JANUARY;
-	sDate.Date = 0x1;
-	sDate.Year = 0x0;
-
-	if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BCD) != HAL_OK) {
-		Error_Handler();
-	}
-	/* USER CODE BEGIN RTC_Init 2 */
-
-	/* USER CODE END RTC_Init 2 */
 
 }
 

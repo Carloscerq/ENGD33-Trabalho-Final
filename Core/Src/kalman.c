@@ -1,4 +1,5 @@
 #include "kalman.h"
+#include "communication_protocols.h"
 #include <string.h>
 
 State kalman_state;

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <math.h>
 #include "linalg.h"
+#include "communication_protocols.h"
 
 #define N_STATES 6
 #define N_MEASUREMENTS 3
@@ -38,14 +39,11 @@ typedef struct
 
 } KalmanTmpMatrices;
 
-typedef struct
-{
-    float x, y, omega;
-} SensorData;
-
+extern State kalman_state;
 extern KalmanMatrices kalman_matrices;
 extern KalmanTmpMatrices kalman_tmp_matrices;
 extern bool kalman_initialized;
+
 void kalman_filter_init(void);
 void kalman_filter_predict(float dt);
 void kalman_filter_update(SensorData *data);
