@@ -37,6 +37,7 @@ typedef struct {
 
 void Marvelmind_Init(void);
 void Marvelmind_ProcessByte(uint8_t byte);
+void Marvelmind_CRC16(uint8_t *buf, uint8_t size);
 MarvelmindUserPayload* Marvelmind_GetPayload(void);
 
 
