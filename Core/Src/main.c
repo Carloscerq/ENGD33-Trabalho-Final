@@ -211,20 +211,20 @@ void vSensor_Event_Handler_Task(void *pvParameters) {
 		if (xEventGroupValue) {
 			if (!uxQueueMessagesWaiting(xMagQueue)
 					|| !uxQueueMessagesWaiting(xGPSQueue)) {
-				break;
+				continue;
 			}
 
 			if (xQueueReceive(xMagQueue, &magnetometer_data,
 			MAX_DELAY) != pdPASS
 					|| xQueueReceive(xGPSQueue, &gps_data, MAX_DELAY) != pdPASS) {
-				break;
+				continue;
 			}
 
 			// Filtro de Kalman
 			
 			// calculo do dt
 			xCurrentTime = xTaskGetTickCount();
-			dt = (float)(xCurrentTime - xPreviousTime) / 1000.0f; // Convert to seconds
+			dt = (float)(xCurrentTime - xPreviousTime) / configTICK_RATE_HZ; // Convert to seconds
 			xPreviousTime = xCurrentTime;
 			
 			// predição do Kalman (baseada no modelo de movimento)
@@ -258,7 +258,7 @@ void vSensor_Event_Handler_Task(void *pvParameters) {
 
 			if (xQueueSendToBack(xSensorQueue, &sensor_data,
 					MAX_DELAY) != pdPASS) {
-				break;
+				continue;
 			}
 
 			xEventGroupSetBits(xSensorEventGroup, SENSOR_ALL_READY);
